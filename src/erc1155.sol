@@ -13,6 +13,7 @@ import {ERC1155Pausable} from "@openzeppelin/contracts/token/ERC1155/extensions/
 // Import other contracts
 import { Whitelist } from "./Whitelist.sol";
 import { PriceConverter } from "./PriceConverter.sol";
+// import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
 
 contract MyToken is
     ERC1155,
@@ -21,28 +22,45 @@ contract MyToken is
     ERC1155Burnable,
     ERC1155Supply
 {
+
+    // Roles
+    // bytes32 public constant DEFAULT_ADMIN_ROLE = keccak256("DEFAULT_ADMIN_ROLE");
     bytes32 public constant URI_SETTER_ROLE = keccak256("URI_SETTER_ROLE");
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
     bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
 
-    // Helper variable
-    // Todo: Set up oracle to get $ price
-    uint256 public constant PRICE = 0.01 ether;
-
     // Whitelist contract instance
     Whitelist whitelist;
+
+    /**
+     * To attache all the functions from the PriceConverter library, to all uint256 we need to declare the uint256
+     *
+     */
+    using PriceConverter for uint256;
+    // AggregatorV3Interface private s_priceFeed;
+
+    // Helper variable
+    // Todo: Set up oracle to get $ price
+    // uint256 public constant PRICE = 0.01 ether;
+    // uint256 public constant PRICE = 5 * 1e18;
+    uint256 public minimumUSD = 5e18;
 
     // Custum error messages
     error CallerNotMinter(address caller);
     error CallerNotAdmin(address caller);
+    error FundMe__NotMinimumUsd();
 
     // Function to receive Ether. msg.data must be empty
-    receive() external payable {}
+    receive() external payable {
+        fundMe();
+    }
 
     // Fallback function is called when msg.data is not empty
-    fallback() external payable {}
+    fallback() external payable {
+        fundMe();
+    }
 
-    constructor(address whitelistContract)
+    constructor(address whitelistContract /*, address _priceFeedAddress */)
         ERC1155(
             "ttps://ipfs.io/ipns/QmU5kCop96Ldt7hBHhEF9k431DcxBdKnN262Btnvo51XdZ/"
         )
@@ -52,11 +70,12 @@ contract MyToken is
         _grantRole(MINTER_ROLE, msg.sender);
         _grantRole(URI_SETTER_ROLE, msg.sender);
         whitelist = Whitelist(whitelistContract);
+        // s_priceFeed = AggregatorV3Interface(_priceFeedAddress);
     }
 
     mapping(address => bool) public checkToMintNFT;
     mapping (uint256 => bool) public isNFT;
-    // mapping (address => bool) public Whitelist;
+    mapping (address => uint256) public balanceOfAddress;
 
     function setURI(
         string memory newuri,
@@ -78,7 +97,6 @@ contract MyToken is
     * Todo: Test multiple URIs whether / is implemented before calling id
     * If necessary add "/" before calling id to ensure that each URI call has a / in front of id.
     **/
-
     function uri(
         uint256 id
     ) public view virtual override returns (string memory) {
@@ -102,8 +120,9 @@ contract MyToken is
     * Todo: instead using _grantRole(MINTER_ROLE, msg.sender) it might be better to use a mapping (address => bool) minter
     * this way it should be possible to set a certain time for the role and force the player to pay monthly to hold the minter role.
     **/
-    function setMinterRole() public payable returns (bool) {
-        require(msg.value >= PRICE, "Your amount is to small");
+    function setSubscriptionMintRole() public payable returns (bool) {
+        // require(getConversionRate(msg.value) >= minimumUSD, "Your amount is to small");
+        require(msg.value.getConversionRate() >= minimumUSD, "Your amount is to small");
         (bool success, ) = payable(msg.sender).call{value: msg.value}("");
         require(success, "Failed to send Ether");
 
@@ -124,11 +143,17 @@ contract MyToken is
         }
     }
 
+    // If someone sents Ether to the contract without minting a token and without any clear reason the tokens will that got send will be tracked and can be send back to the account if necessary
+    function fundMe() public payable {
+        // uint256 _minimumUSD = minimumUSD;
+        // if (msg.value.getConversionRate(s_priceFeed) < _PRICE) revert FundMe__NotMinimumUsd();
+        // if (msg.value.getConversionRate() <= _minimumUSD) revert FundMe__NotMinimumUsd();
+        balanceOfAddress[msg.sender] += msg.value;
+    }
+
     function mint(uint256 id, uint256 amount, bool isERC721) public payable {
-        // Check that the calling account has the minter role
-        // if (!hasRole(MINTER_ROLE, msg.sender)) {
-        //     revert CallerNotMinter(msg.sender);
-        // }
+
+        uint256 _minimumUSD = minimumUSD;
 
         // Ensure only one NFT can be minted for ERC721
         if (isERC721) {
@@ -140,8 +165,6 @@ contract MyToken is
                 require(amount == 1, "NFTs are rare");
 
                 // Check for ERC-20 tokens that are bought through paying the contract
-                // Currently the requier test whether only token ID of 0 is >= 10000000000
-                // Todo: requrie(msg.sender, id) >= necessaryERC20amount
                 require(
                     balanceOf(msg.sender, 0) >= 10000000000,
                     "You don't have enough Gold tokens to mint a NFT"
@@ -149,19 +172,13 @@ contract MyToken is
 
                 checkToMintNFT[msg.sender] = true;
 
-                // New require condition
-                // require(checkToMintNFT[msg.sender] == true, "You're not allowed to mint NFT");
-
                 isNFT[id] = true;
             
                 // Mint the ERC721 token
                 _mint(msg.sender, id, 1, "");
 
-                // Might be an issue in thought mind
-                // Perhaps only use msg.sender to burn tokens from the account that also mint the ECR-721 token
                 if (!hasRole(DEFAULT_ADMIN_ROLE, msg.sender)) {
                     // Burn the ERC-20 token to ensure that the account that minted the NFT isn't able to create a new NFT only if the account has enough ERC-20 token
-                    // Todo: _burn(msg.sender, id, necessaryERC20amount)
                     _burn(msg.sender, 0, 10000000000);
                 }
             }
@@ -170,12 +187,15 @@ contract MyToken is
             // Mint the ERC1155 token
             _mint(msg.sender, id, amount, "");
         } else {
-            require(msg.value >= PRICE, "Your amount is to small");
+            // require(msg.value.getConversionRate(s_priceFeed) >= PRICE, "Your amount is to small");
+            require(msg.value.getConversionRate() >= _minimumUSD, "Your amount is to small");
+
+            fundMe();
             
             uint256 balanceOfContract = address(this).balance;
             balanceOfContract += msg.value;
             
-            // Mint the ERC-20 token
+            // Mint the ERC1155 token
             _mint(msg.sender, id, amount, "");
         }
     }
@@ -188,19 +208,6 @@ contract MyToken is
     ) public onlyRole(MINTER_ROLE) {
         _mintBatch(to, ids, amounts, data);
     }
-
-    // function getContractBalance() public view returns (uint256) {
-    //     return address(this).balance;
-    // }
-
-    // function testpay() public payable returns (uint256) {
-    //     // (bool success, ) = payable(msg.sender).call{value: msg.value}("");
-    //     // balanceOfContract = address(this).balance;
-    //     uint256 balanceOfContract = address(this).balance;
-    //     balanceOfContract += msg.value;
-    //     // require(success, "Failed to send Ether");
-    //     return address(this).balance;
-    // }
 
     // Withdraw function to pay the admin if the contract has ETH in it
     function withdraw () public  payable {
@@ -239,4 +246,3 @@ contract MyToken is
         return super.supportsInterface(interfaceId);
     }
 }
-

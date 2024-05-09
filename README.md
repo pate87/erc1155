@@ -12,6 +12,8 @@
 
 Just deploy the contract. There are no constructor commands to add.
 
+- [] test PriceConverter library on real testnet -> sepolia
+
 ## Whitelist.sol
 
 The contract has a constructor that uses a uint number to set up how many addresses are able to be on the whitelist.
