@@ -13,7 +13,7 @@ import {ERC1155Pausable} from "@openzeppelin/contracts/token/ERC1155/extensions/
 // Import other contracts
 import { Whitelist } from "./Whitelist.sol";
 import { PriceConverter } from "./PriceConverter.sol";
-// import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
+import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
 
 contract MyToken is
     ERC1155,
@@ -37,18 +37,18 @@ contract MyToken is
      *
      */
     using PriceConverter for uint256;
-    // AggregatorV3Interface private s_priceFeed;
+    AggregatorV3Interface private s_priceFeed;
 
     // Helper variable
     // Todo: Set up oracle to get $ price
     // uint256 public constant PRICE = 0.01 ether;
     // uint256 public constant PRICE = 5 * 1e18;
-    uint256 public minimumUSD = 5e18;
+    uint256 public constant MINIMUM_USD = 5e18;
 
     // Custum error messages
     error CallerNotMinter(address caller);
     error CallerNotAdmin(address caller);
-    error FundMe__NotMinimumUsd();
+    // error NotEnoughMINIMUM_USD();
 
     // Function to receive Ether. msg.data must be empty
     receive() external payable {
@@ -60,7 +60,7 @@ contract MyToken is
         fundMe();
     }
 
-    constructor(address whitelistContract /*, address _priceFeedAddress */)
+    constructor(address whitelistContract , address _priceFeedAddress)
         ERC1155(
             "ttps://ipfs.io/ipns/QmU5kCop96Ldt7hBHhEF9k431DcxBdKnN262Btnvo51XdZ/"
         )
@@ -70,12 +70,12 @@ contract MyToken is
         _grantRole(MINTER_ROLE, msg.sender);
         _grantRole(URI_SETTER_ROLE, msg.sender);
         whitelist = Whitelist(whitelistContract);
-        // s_priceFeed = AggregatorV3Interface(_priceFeedAddress);
+        s_priceFeed = AggregatorV3Interface(_priceFeedAddress);
     }
 
-    mapping(address => bool) public checkToMintNFT;
-    mapping (uint256 => bool) public isNFT;
-    mapping (address => uint256) public balanceOfAddress;
+    mapping(address => bool) private checkToMintNFT;
+    mapping (uint256 => bool) private isNFT;
+    mapping (address => uint256) private s_balanceOfAddress;
 
     function setURI(
         string memory newuri,
@@ -121,8 +121,8 @@ contract MyToken is
     * this way it should be possible to set a certain time for the role and force the player to pay monthly to hold the minter role.
     **/
     function setSubscriptionMintRole() public payable returns (bool) {
-        // require(getConversionRate(msg.value) >= minimumUSD, "Your amount is to small");
-        require(msg.value.getConversionRate() >= minimumUSD, "Your amount is to small");
+        require(msg.value.getConversionRate(s_priceFeed) >= MINIMUM_USD, "Your amount is to small");
+        // require(msg.value.getConversionRate() >= MINIMUM_USD, "Your amount is to small");
         (bool success, ) = payable(msg.sender).call{value: msg.value}("");
         require(success, "Failed to send Ether");
 
@@ -145,15 +145,15 @@ contract MyToken is
 
     // If someone sents Ether to the contract without minting a token and without any clear reason the tokens will that got send will be tracked and can be send back to the account if necessary
     function fundMe() public payable {
-        // uint256 _minimumUSD = minimumUSD;
-        // if (msg.value.getConversionRate(s_priceFeed) < _PRICE) revert FundMe__NotMinimumUsd();
-        // if (msg.value.getConversionRate() <= _minimumUSD) revert FundMe__NotMinimumUsd();
-        balanceOfAddress[msg.sender] += msg.value;
+        // uint256 MINIMUM_USD = MINIMUM_USD;
+        // if (msg.value.getConversionRate(s_priceFeed) < _PRICE) revert MINIMUM_USD();
+        // if (msg.value.getConversionRate() <= MINIMUM_USD) revert MINIMUM_USD();
+        s_balanceOfAddress[msg.sender] += msg.value;
     }
 
     function mint(uint256 id, uint256 amount, bool isERC721) public payable {
 
-        uint256 _minimumUSD = minimumUSD;
+        uint256 _MINIMUM_USD = MINIMUM_USD;
 
         // Ensure only one NFT can be minted for ERC721
         if (isERC721) {
@@ -187,8 +187,8 @@ contract MyToken is
             // Mint the ERC1155 token
             _mint(msg.sender, id, amount, "");
         } else {
-            // require(msg.value.getConversionRate(s_priceFeed) >= PRICE, "Your amount is to small");
-            require(msg.value.getConversionRate() >= _minimumUSD, "Your amount is to small");
+            require(msg.value.getConversionRate(s_priceFeed) >= _MINIMUM_USD, "Your amount is to small");
+            // require(msg.value.getConversionRate() >= _MINIMUM_USD, "Your amount is to small");
 
             fundMe();
             
@@ -244,5 +244,17 @@ contract MyToken is
         bytes4 interfaceId
     ) public view override(ERC1155, AccessControl) returns (bool) {
         return super.supportsInterface(interfaceId);
+    }
+
+    /**
+    * View / Pure function (Getter) 
+    */
+
+    function getAddressToAmountFounded(address fundingAddress) external view returns (uint256) {
+        return s_balanceOfAddress[fundingAddress];
+    }
+
+    function getNFT(uint256 id) external view returns (bool) {
+        return isNFT[id];
     }
 }
